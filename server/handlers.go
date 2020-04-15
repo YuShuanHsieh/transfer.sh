@@ -32,6 +32,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,6 +56,8 @@ import (
 	"time"
 
 	"net"
+	"encoding/hex"
+	"crypto/hmac"
 
 	"encoding/base64"
 	web "github.com/dutchcoders/transfer.sh-web"
@@ -64,6 +67,14 @@ import (
 )
 
 const getPathPart = "get"
+
+type AuthType string
+
+const (
+	IP AuthType = "IP"
+	METADATA AuthType = "METADATA"
+	// ACCOUNT AuthType = "ACCOUNT"
+)
 
 var (
 	htmlTemplates = initHTMLTemplates()
@@ -373,6 +384,16 @@ type Metadata struct {
 	MaxDate time.Time
 	// DeletionToken contains the token to match against for deletion
 	DeletionToken string
+
+	AuthTypes []AuthType
+	// Basic Auth for downloading
+	User string
+	// Basic Auth for downloading
+	Password string
+	// IP filter
+	IP []net.IP
+	// Network filter
+	Nets []*net.IPNet
 }
 
 func MetadataForRequest(contentType string, r *http.Request) Metadata {
@@ -402,6 +423,22 @@ func MetadataForRequest(contentType string, r *http.Request) Metadata {
 func (s *Server) putHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 
+	// TODO: integration with code repository
+	// account := r.FormValue("account")
+	user := r.FormValue("user")
+	pwd := r.FormValue("password")
+	ipsStr := r.FormValue("ip")
+
+	var err error
+	var ips []net.IP
+	var nets []*net.IPNet
+	if ipsStr != "" {
+		ips, nets, err = parseIPString(ipsStr)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+	}
+
 	filename := sanitize(vars["filename"])
 
 	contentLength := r.ContentLength
@@ -414,7 +451,6 @@ func (s *Server) putHandler(w http.ResponseWriter, r *http.Request) {
 
 	if contentLength == -1 {
 		// queue file to disk, because s3 needs content length
-		var err error
 		var f io.Reader
 
 		f = reader
@@ -471,6 +507,20 @@ func (s *Server) putHandler(w http.ResponseWriter, r *http.Request) {
 
 	metadata := MetadataForRequest(contentType, r)
 
+	// TODO: Add account integration
+
+	if user != "" && pwd != "" {
+		metadata.AuthTypes = append(metadata.AuthTypes, METADATA)
+		metadata.User = user
+		metadata.Password = cryptoPwd(pwd, token)
+	}
+
+	if ipsStr != "" {
+		metadata.AuthTypes = append(metadata.AuthTypes, IP)
+		metadata.IP = ips
+		metadata.Nets = nets
+	}
+
 	buffer := &bytes.Buffer{}
 	if err := json.NewEncoder(buffer).Encode(metadata); err != nil {
 		log.Printf("%s", err.Error())
@@ -483,8 +533,6 @@ func (s *Server) putHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Uploading %s %s %d %s", token, filename, contentLength, contentType)
-
-	var err error
 
 	if err = s.storage.Put(token, filename, reader, contentType, uint64(contentLength)); err != nil {
 		log.Printf("Error putting new file: %s", err.Error())
@@ -676,6 +724,51 @@ func (s *Server) CheckDeletionToken(deletionToken, token, filename string) error
 	}
 
 	return nil
+}
+
+func (s *Server) GetMetadata(token, filename string) (Metadata, error) {
+	s.Lock(token, filename)
+	defer s.Unlock(token, filename)
+
+	var metadata Metadata
+
+	r, _, err := s.storage.Get(token, fmt.Sprintf("%s.metadata", filename))
+	if s.storage.IsNotExist(err) {
+		return metadata, fmt.Errorf("failed to find metadata from file %s", filename)
+	} else if err != nil {
+		return metadata, err
+	}
+
+	defer r.Close()
+
+	if err := json.NewDecoder(r).Decode(&metadata); err != nil {
+		return metadata, err
+	}
+	return metadata, nil
+}
+
+func (s *Server) CheckAuth(user, password, token, filename string) (bool, error) {
+	s.Lock(token, filename)
+	defer s.Unlock(token, filename)
+
+	var metadata Metadata
+
+	r, _, err := s.storage.Get(token, fmt.Sprintf("%s.metadata", filename))
+	if s.storage.IsNotExist(err) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+
+	defer r.Close()
+
+	if err := json.NewDecoder(r).Decode(&metadata); err != nil {
+		return false, err
+	} else if metadata.User == user && metadata.Password == cryptoPwd(password, token) {
+		return true, nil
+	}
+
+	return false, nil
 }
 
 func (s *Server) deleteHandler(w http.ResponseWriter, r *http.Request) {
@@ -1072,4 +1165,105 @@ func (s *Server) BasicAuthHandler(h http.Handler) http.HandlerFunc {
 
 		h.ServeHTTP(w, r)
 	}
+}
+
+func (s *Server) BasicAuthDownloadHandler(h http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+
+		token := vars["token"]
+		filename := vars["filename"]
+
+		metadata, err := s.GetMetadata(token, filename)
+		if err != nil {
+			log.Printf("failed to get metadata: %s", err.Error())
+		}
+		if len(metadata.AuthTypes) == 0 {
+			h.ServeHTTP(w, r)
+		}
+
+		blockedIP := false
+		for _, authType := range metadata.AuthTypes {
+			if authType == IP {
+				blockedIP = true
+				host, _, err := net.SplitHostPort(r.RemoteAddr)
+				remoteIP := net.ParseIP(host)
+				if err != nil || remoteIP == nil {
+					http.Error(w, "Not authorized", 401)
+					return
+				}
+				log.Printf("remote IP: %s \n", remoteIP)
+				for _, ip := range metadata.IP {
+					if ip.Equal(remoteIP) {
+						blockedIP = false
+						break
+					}
+				}
+				if blockedIP {
+					for _, net := range metadata.Nets {
+						if net.Contains(remoteIP) {
+							blockedIP = false
+							break
+						}
+					}
+				}
+			}
+		}
+
+		if blockedIP {
+			http.Error(w, "Not authorized", 401)
+			return
+		}
+
+		w.Header().Set("WWW-Authenticate", "Basic realm=\"Restricted\"")
+
+		username, password, authOK := r.BasicAuth()
+		if authOK == false {
+			http.Error(w, "Not authorized", 401)
+			return
+		}
+
+		ok, err := s.CheckAuth(username, password, token, filename)
+		if err != nil {
+			log.Printf("Error checkAuth: %s", err.Error())
+		}
+		if !ok {
+			http.Error(w, "Not authorized", 401)
+			return
+		}
+
+		h.ServeHTTP(w, r)
+	}
+}
+
+func cryptoPwd(password, token string) string {
+	mac := hmac.New(sha256.New, []byte(token))
+	mac.Write([]byte(password))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func parseIPString(ipsStr string) ([]net.IP, []*net.IPNet, error) {
+	var ipArray []net.IP
+	var ipNets []*net.IPNet
+	ips := strings.Split(ipsStr, ",")
+
+	if len(ips) == 0 {
+		return ipArray, ipNets, nil
+	}
+
+	for _, ip := range ips {
+		if parsedIP := net.ParseIP(ip); parsedIP != nil {
+			ipArray = append(ipArray, parsedIP)
+			continue
+		}
+		if _, net, err := net.ParseCIDR(ip); err == nil {
+			ipNets = append(ipNets, net)
+		}
+	}
+
+	if len(ipArray) == 0 && len(ipNets) == 0 {
+		return ipArray, ipNets, errors.New("invalid IP strings")
+	}
+
+	return ipArray, ipNets, nil
 }

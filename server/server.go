@@ -300,6 +300,8 @@ type Server struct {
 	Certificate string
 
 	LetsEncryptCache string
+
+
 }
 
 func New(options ...OptionFn) (*Server, error) {
@@ -416,8 +418,8 @@ func (s *Server) Run() {
 		getHandlerFn = ratelimit.Request(ratelimit.IP).Rate(s.rateLimitRequests, 60*time.Second).LimitBy(memory.New())(http.HandlerFunc(getHandlerFn)).ServeHTTP
 	}
 
-	r.HandleFunc("/{token}/{filename}", getHandlerFn).Methods("GET")
-	r.HandleFunc("/{action:(?:download|get|inline)}/{token}/{filename}", getHandlerFn).Methods("GET")
+	r.HandleFunc("/{token}/{filename}", s.BasicAuthDownloadHandler(http.HandlerFunc(getHandlerFn))).Methods("GET")
+	r.HandleFunc("/{action:(?:download|get|inline)}/{token}/{filename}", s.BasicAuthDownloadHandler(http.HandlerFunc(getHandlerFn))).Methods("GET")
 
 	r.HandleFunc("/{filename}/virustotal", s.virusTotalHandler).Methods("PUT")
 	r.HandleFunc("/{filename}/scan", s.scanHandler).Methods("PUT")
