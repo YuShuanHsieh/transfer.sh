@@ -36,7 +36,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	blackfriday "github.com/russross/blackfriday/v2"
 	"html"
 	html_template "html/template"
 	"io"
@@ -55,11 +54,14 @@ import (
 	text_template "text/template"
 	"time"
 
-	"net"
-	"encoding/hex"
+	blackfriday "github.com/russross/blackfriday/v2"
+
 	"crypto/hmac"
+	"encoding/hex"
+	"net"
 
 	"encoding/base64"
+
 	web "github.com/dutchcoders/transfer.sh-web"
 	"github.com/gorilla/mux"
 	"github.com/microcosm-cc/bluemonday"
@@ -67,14 +69,6 @@ import (
 )
 
 const getPathPart = "get"
-
-type AuthType string
-
-const (
-	IP AuthType = "IP"
-	METADATA AuthType = "METADATA"
-	// ACCOUNT AuthType = "ACCOUNT"
-)
 
 var (
 	htmlTemplates = initHTMLTemplates()
@@ -369,31 +363,6 @@ func cleanTmpFile(f *os.File) {
 			log.Printf("Error removing tmpfile: %s (%s)", err, f.Name())
 		}
 	}
-}
-
-type Metadata struct {
-	// ContentType is the original uploading content type
-	ContentType string
-	// Secret as knowledge to delete file
-	// Secret string
-	// Downloads is the actual number of downloads
-	Downloads int
-	// MaxDownloads contains the maximum numbers of downloads
-	MaxDownloads int
-	// MaxDate contains the max age of the file
-	MaxDate time.Time
-	// DeletionToken contains the token to match against for deletion
-	DeletionToken string
-
-	AuthTypes []AuthType
-	// Basic Auth for downloading
-	User string
-	// Basic Auth for downloading
-	Password string
-	// IP filter
-	IP []net.IP
-	// Network filter
-	Nets []*net.IPNet
 }
 
 func MetadataForRequest(contentType string, r *http.Request) Metadata {
@@ -1145,7 +1114,7 @@ func IPFilterHandler(h http.Handler, ipFilterOptions *IPFilterOptions) http.Hand
 
 func (s *Server) BasicAuthHandler(h http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.AuthUser == "" || s.AuthPass == "" {
+		if s.serverAuth == nil {
 			h.ServeHTTP(w, r)
 			return
 		}
@@ -1158,7 +1127,7 @@ func (s *Server) BasicAuthHandler(h http.Handler) http.HandlerFunc {
 			return
 		}
 
-		if username != s.AuthUser || password != s.AuthPass {
+		if ok, err := s.serverAuth.Authenticate(username, password); !ok || err != nil {
 			http.Error(w, "Not authorized", 401)
 			return
 		}
@@ -1182,17 +1151,23 @@ func (s *Server) BasicAuthDownloadHandler(h http.Handler) http.HandlerFunc {
 			h.ServeHTTP(w, r)
 		}
 
+		var basicAuth Authenticator
 		blockedIP := false
 		for _, authType := range metadata.AuthTypes {
-			if authType == IP {
+			switch authType {
+			case ACCOUNT:
+				// TODO: add code Authenticator
+			case METADATA:
+				basicAuth = &metadata
+			case IP:
 				blockedIP = true
 				host, _, err := net.SplitHostPort(r.RemoteAddr)
 				remoteIP := net.ParseIP(host)
 				if err != nil || remoteIP == nil {
+					log.Printf("remoteAddr of request is: %s \n", r.RemoteAddr)
 					http.Error(w, "Not authorized", 401)
 					return
 				}
-				log.Printf("remote IP: %s \n", remoteIP)
 				for _, ip := range metadata.IP {
 					if ip.Equal(remoteIP) {
 						blockedIP = false
@@ -1223,7 +1198,7 @@ func (s *Server) BasicAuthDownloadHandler(h http.Handler) http.HandlerFunc {
 			return
 		}
 
-		ok, err := s.CheckAuth(username, password, token, filename)
+		ok, err := basicAuth.Authenticate(username, password)
 		if err != nil {
 			log.Printf("Error checkAuth: %s", err.Error())
 		}

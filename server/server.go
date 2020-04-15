@@ -25,11 +25,9 @@ THE SOFTWARE.
 package server
 
 import (
-	"errors"
-	gorillaHandlers "github.com/gorilla/handlers"
-	"log"
 	crypto_rand "crypto/rand"
 	"encoding/binary"
+	"log"
 	"math/rand"
 	"mime"
 	"net/http"
@@ -41,7 +39,7 @@ import (
 	"syscall"
 	"time"
 
-	context "golang.org/x/net/context"
+	gorillaHandlers "github.com/gorilla/handlers"
 
 	"github.com/PuerkitoBio/ghost/handlers"
 	"github.com/VojtechVitek/ratelimit"
@@ -54,9 +52,6 @@ import (
 
 	web "github.com/dutchcoders/transfer.sh-web"
 	assetfs "github.com/elazarl/go-bindata-assetfs"
-
-	autocert "golang.org/x/crypto/acme/autocert"
-	"path/filepath"
 )
 
 const SERVER_INFO = "transfer.sh"
@@ -67,201 +62,9 @@ const _24K = (1 << 3) * 24
 // parse request with maximum memory of _5Megabytes
 const _5M = (1 << 20) * 5
 
-type OptionFn func(*Server)
-
-func ClamavHost(s string) OptionFn {
-	return func(srvr *Server) {
-		srvr.ClamAVDaemonHost = s
-	}
-}
-
-func VirustotalKey(s string) OptionFn {
-	return func(srvr *Server) {
-		srvr.VirusTotalKey = s
-	}
-}
-
-func Listener(s string) OptionFn {
-	return func(srvr *Server) {
-		srvr.ListenerString = s
-	}
-
-}
-
-func CorsDomains(s string) OptionFn {
-	return func(srvr *Server) {
-		srvr.CorsDomains = s
-	}
-
-}
-
-func GoogleAnalytics(gaKey string) OptionFn {
-	return func(srvr *Server) {
-		srvr.gaKey = gaKey
-	}
-}
-
-func UserVoice(userVoiceKey string) OptionFn {
-	return func(srvr *Server) {
-		srvr.userVoiceKey = userVoiceKey
-	}
-}
-
-func TLSListener(s string, t bool) OptionFn {
-	return func(srvr *Server) {
-		srvr.TLSListenerString = s
-		srvr.TLSListenerOnly = t
-	}
-
-}
-
-func ProfileListener(s string) OptionFn {
-	return func(srvr *Server) {
-		srvr.ProfileListenerString = s
-	}
-}
-
-func WebPath(s string) OptionFn {
-	return func(srvr *Server) {
-		if s[len(s)-1:] != "/" {
-			s = s + string(filepath.Separator)
-		}
-
-		srvr.webPath = s
-	}
-}
-
-func ProxyPath(s string) OptionFn {
-	return func(srvr *Server) {
-		if s[len(s)-1:] != "/" {
-			s = s + string(filepath.Separator)
-		}
-
-		srvr.proxyPath = s
-	}
-}
-
-func ProxyPort(s string) OptionFn {
-	return func(srvr *Server) {
-		srvr.proxyPort = s
-	}
-}
-
-func TempPath(s string) OptionFn {
-	return func(srvr *Server) {
-		if s[len(s)-1:] != "/" {
-			s = s + string(filepath.Separator)
-		}
-
-		srvr.tempPath = s
-	}
-}
-
-func LogFile(logger *log.Logger, s string) OptionFn {
-	return func(srvr *Server) {
-		f, err := os.OpenFile(s, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-		if err != nil {
-			log.Fatalf("error opening file: %v", err)
-		}
-
-		logger.SetOutput(f)
-		srvr.logger = logger
-	}
-}
-
-func Logger(logger *log.Logger) OptionFn {
-	return func(srvr *Server) {
-		srvr.logger = logger
-	}
-}
-
-func RateLimit(requests int) OptionFn {
-	return func(srvr *Server) {
-		srvr.rateLimitRequests = requests
-	}
-}
-
-func ForceHTTPs() OptionFn {
-	return func(srvr *Server) {
-		srvr.forceHTTPs = true
-	}
-}
-
-func EnableProfiler() OptionFn {
-	return func(srvr *Server) {
-		srvr.profilerEnabled = true
-	}
-}
-
-func UseStorage(s Storage) OptionFn {
-	return func(srvr *Server) {
-		srvr.storage = s
-	}
-}
-
-func UseLetsEncrypt(hosts []string) OptionFn {
-	return func(srvr *Server) {
-		cacheDir := "./cache/"
-
-		m := autocert.Manager{
-			Prompt: autocert.AcceptTOS,
-			Cache:  autocert.DirCache(cacheDir),
-			HostPolicy: func(_ context.Context, host string) error {
-				found := false
-
-				for _, h := range hosts {
-					found = found || strings.HasSuffix(host, h)
-				}
-
-				if !found {
-					return errors.New("acme/autocert: host not configured")
-				}
-
-				return nil
-			},
-		}
-
-		srvr.tlsConfig = &tls.Config{
-			GetCertificate: m.GetCertificate,
-		}
-	}
-}
-
-func TLSConfig(cert, pk string) OptionFn {
-	certificate, err := tls.LoadX509KeyPair(cert, pk)
-	return func(srvr *Server) {
-		srvr.tlsConfig = &tls.Config{
-			GetCertificate: func(clientHello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				return &certificate, err
-			},
-		}
-	}
-}
-
-func HttpAuthCredentials(user string, pass string) OptionFn {
-	return func(srvr *Server) {
-		srvr.AuthUser = user
-		srvr.AuthPass = pass
-	}
-}
-
-func FilterOptions(options IPFilterOptions) OptionFn {
-	for i, allowedIP := range options.AllowedIPs {
-		options.AllowedIPs[i] = strings.TrimSpace(allowedIP)
-	}
-
-	for i, blockedIP := range options.BlockedIPs {
-		options.BlockedIPs[i] = strings.TrimSpace(blockedIP)
-	}
-
-	return func(srvr *Server) {
-		srvr.ipFilterOptions = &options
-	}
-}
-
 type Server struct {
-	AuthUser string
-	AuthPass string
+	// This authenticator is for uploading files
+	serverAuth Authenticator
 
 	logger *log.Logger
 
@@ -273,7 +76,8 @@ type Server struct {
 
 	rateLimitRequests int
 
-	storage Storage
+	storage         Storage
+	metadataStorage Storage
 
 	forceHTTPs bool
 
@@ -300,8 +104,11 @@ type Server struct {
 	Certificate string
 
 	LetsEncryptCache string
+}
 
-
+type DefaultServAuthenticator struct {
+	user     string
+	password string
 }
 
 func New(options ...OptionFn) (*Server, error) {
@@ -506,4 +313,16 @@ func (s *Server) Run() {
 	}
 
 	s.logger.Printf("Server stopped.")
+}
+
+func (d *DefaultServAuthenticator) Set(user, password string) {
+	d.user = user
+	d.password = password
+}
+
+func (d *DefaultServAuthenticator) Authenticate(user, password string) (bool, error) {
+	if d.user == user && password == password {
+		return true, nil
+	}
+	return false, nil
 }

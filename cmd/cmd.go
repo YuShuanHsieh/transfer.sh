@@ -116,6 +116,11 @@ var globalFlags = []cli.Flag{
 		EnvVar: "PROVIDER",
 	},
 	cli.StringFlag{
+		Name:  "meta-provider",
+		Usage: "s3|gdrive|local",
+		Value: "",
+	},
+	cli.StringFlag{
 		Name:   "s3-endpoint",
 		Usage:  "",
 		Value:  "",
@@ -360,7 +365,9 @@ func New() *Cmd {
 		if httpAuthUser := c.String("http-auth-user"); httpAuthUser == "" {
 		} else if httpAuthPass := c.String("http-auth-pass"); httpAuthPass == "" {
 		} else {
-			options = append(options, server.HttpAuthCredentials(httpAuthUser, httpAuthPass))
+			var authenticator server.DefaultServAuthenticator
+			authenticator.Set(httpAuthUser, httpAuthPass)
+			options = append(options, server.AuthCredentials(&authenticator))
 		}
 
 		applyIPFilter := false
@@ -380,44 +387,21 @@ func New() *Cmd {
 			options = append(options, server.FilterOptions(ipFilterOptions))
 		}
 
-		switch provider := c.String("provider"); provider {
-		case "s3":
-			if accessKey := c.String("aws-access-key"); accessKey == "" {
-				panic("access-key not set.")
-			} else if secretKey := c.String("aws-secret-key"); secretKey == "" {
-				panic("secret-key not set.")
-			} else if bucket := c.String("bucket"); bucket == "" {
-				panic("bucket not set.")
-			} else if storage, err := server.NewS3Storage(accessKey, secretKey, bucket, c.String("s3-region"), c.String("s3-endpoint"), logger, c.Bool("s3-no-multipart"), c.Bool("s3-path-style")); err != nil {
-				panic(err)
-			} else {
-				options = append(options, server.UseStorage(storage))
-			}
-		case "gdrive":
-			chunkSize := c.Int("gdrive-chunk-size")
-
-			if clientJsonFilepath := c.String("gdrive-client-json-filepath"); clientJsonFilepath == "" {
-				panic("client-json-filepath not set.")
-			} else if localConfigPath := c.String("gdrive-local-config-path"); localConfigPath == "" {
-				panic("local-config-path not set.")
-			} else if basedir := c.String("basedir"); basedir == "" {
-				panic("basedir not set.")
-			} else if storage, err := server.NewGDriveStorage(clientJsonFilepath, localConfigPath, basedir, chunkSize, logger); err != nil {
-				panic(err)
-			} else {
-				options = append(options, server.UseStorage(storage))
-			}
-		case "local":
-			if v := c.String("basedir"); v == "" {
-				panic("basedir not set.")
-			} else if storage, err := server.NewLocalStorage(v, logger); err != nil {
-				panic(err)
-			} else {
-				options = append(options, server.UseStorage(storage))
-			}
-		default:
+		fileStorage := getStorage(c, c.String("provider"), logger)
+		if fileStorage == nil {
 			panic("Provider not set or invalid.")
 		}
+
+		options = append(options, server.UseStorage(fileStorage))
+
+		var metaStorage server.Storage
+		if metaProvider := c.String("meta-provider"); metaProvider != "" {
+			metaStorage = getStorage(c, metaProvider, logger)
+		} else {
+			metaStorage = fileStorage
+		}
+
+		options = append(options, server.UseMetaStorage(metaStorage))
 
 		srvr, err := server.New(
 			options...,
@@ -433,5 +417,46 @@ func New() *Cmd {
 
 	return &Cmd{
 		App: app,
+	}
+}
+
+func getStorage(c *cli.Context, provider string, logger *log.Logger) server.Storage {
+	switch provider {
+	case "s3":
+		if accessKey := c.String("aws-access-key"); accessKey == "" {
+			panic("access-key not set.")
+		} else if secretKey := c.String("aws-secret-key"); secretKey == "" {
+			panic("secret-key not set.")
+		} else if bucket := c.String("bucket"); bucket == "" {
+			panic("bucket not set.")
+		} else if storage, err := server.NewS3Storage(accessKey, secretKey, bucket, c.String("s3-region"), c.String("s3-endpoint"), logger, c.Bool("s3-no-multipart"), c.Bool("s3-path-style")); err != nil {
+			panic(err)
+		} else {
+			return storage
+		}
+	case "gdrive":
+		chunkSize := c.Int("gdrive-chunk-size")
+
+		if clientJsonFilepath := c.String("gdrive-client-json-filepath"); clientJsonFilepath == "" {
+			panic("client-json-filepath not set.")
+		} else if localConfigPath := c.String("gdrive-local-config-path"); localConfigPath == "" {
+			panic("local-config-path not set.")
+		} else if basedir := c.String("basedir"); basedir == "" {
+			panic("basedir not set.")
+		} else if storage, err := server.NewGDriveStorage(clientJsonFilepath, localConfigPath, basedir, chunkSize, logger); err != nil {
+			panic(err)
+		} else {
+			return storage
+		}
+	case "local":
+		if v := c.String("basedir"); v == "" {
+			panic("basedir not set.")
+		} else if storage, err := server.NewLocalStorage(v, logger); err != nil {
+			panic(err)
+		} else {
+			return storage
+		}
+	default:
+		return nil
 	}
 }
