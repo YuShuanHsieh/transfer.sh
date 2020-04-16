@@ -260,6 +260,21 @@ func (s *Server) postHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user := r.Form.Get("user")
+	pwd := r.Form.Get("password")
+	ipsStr := r.Form.Get("ip")
+
+	var err error
+	var ips []net.IP
+	var nets []*net.IPNet
+	if ipsStr != "" {
+		ips, nets, err = parseIPString(ipsStr)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	token := Encode(10000000 + int64(rand.Intn(1000000000)))
 
 	w.Header().Set("Content-Type", "text/plain")
@@ -317,6 +332,18 @@ func (s *Server) postHandler(w http.ResponseWriter, r *http.Request) {
 			contentLength := n
 
 			metadata := MetadataForRequest(contentType, r)
+
+			if user != "" && pwd != "" {
+				metadata.AuthTypes = append(metadata.AuthTypes, METADATA)
+				metadata.User = user
+				metadata.Password = cryptoPwd(pwd, token)
+			}
+
+			if ipsStr != "" {
+				metadata.AuthTypes = append(metadata.AuthTypes, IP)
+				metadata.IP = ips
+				metadata.Nets = nets
+			}
 
 			buffer := &bytes.Buffer{}
 			if err := json.NewEncoder(buffer).Encode(metadata); err != nil {
@@ -392,40 +419,19 @@ func MetadataForRequest(contentType string, r *http.Request) Metadata {
 func (s *Server) putHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 
-	// TODO: integration with code repository
-	// account := r.FormValue("account")
-	user := r.FormValue("user")
-	pwd := r.FormValue("password")
-	ipsStr := r.FormValue("ip")
-
-	var err error
-	var ips []net.IP
-	var nets []*net.IPNet
-	if ipsStr != "" {
-		ips, nets, err = parseIPString(ipsStr)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	}
-
 	filename := sanitize(vars["filename"])
+
+	contentLength := r.ContentLength
 
 	var reader io.Reader
 
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	reader = file
-
-	contentLength := header.Size
+	reader = r.Body
 
 	defer r.Body.Close()
 
 	if contentLength == -1 {
 		// queue file to disk, because s3 needs content length
+		var err error
 		var f io.Reader
 
 		f = reader
@@ -482,20 +488,6 @@ func (s *Server) putHandler(w http.ResponseWriter, r *http.Request) {
 
 	metadata := MetadataForRequest(contentType, r)
 
-	// TODO: Add account integration
-
-	if user != "" && pwd != "" {
-		metadata.AuthTypes = append(metadata.AuthTypes, METADATA)
-		metadata.User = user
-		metadata.Password = cryptoPwd(pwd, token)
-	}
-
-	if ipsStr != "" {
-		metadata.AuthTypes = append(metadata.AuthTypes, IP)
-		metadata.IP = ips
-		metadata.Nets = nets
-	}
-
 	buffer := &bytes.Buffer{}
 	if err := json.NewEncoder(buffer).Encode(metadata); err != nil {
 		log.Printf("%s", err.Error())
@@ -508,6 +500,8 @@ func (s *Server) putHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Uploading %s %s %d %s", token, filename, contentLength, contentType)
+
+	var err error
 
 	if err = s.storage.Put(token, filename, reader, contentType, uint64(contentLength)); err != nil {
 		log.Printf("Error putting new file: %s", err.Error())
