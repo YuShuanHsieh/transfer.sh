@@ -495,7 +495,7 @@ func (s *Server) putHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s", err.Error())
 		http.Error(w, errors.New("Could not encode metadata").Error(), 500)
 		return
-	} else if err := s.storage.Put(token, fmt.Sprintf("%s.metadata", filename), buffer, "text/json", uint64(buffer.Len())); err != nil {
+	} else if err := s.metadataStorage.Put(token, fmt.Sprintf("%s.metadata", filename), buffer, "text/json", uint64(buffer.Len())); err != nil {
 		log.Printf("%s", err.Error())
 		http.Error(w, errors.New("Could not save metadata").Error(), 500)
 		return
@@ -639,8 +639,10 @@ func (s *Server) CheckMetadata(token, filename string, increaseDownload bool) (M
 
 	var metadata Metadata
 
-	r, _, err := s.storage.Get(token, fmt.Sprintf("%s.metadata", filename))
-	if err != nil {
+	r, _, err := s.metadataStorage.Get(token, fmt.Sprintf("%s.metadata", filename))
+	if s.metadataStorage.IsNotExist(err) {
+		return metadata, nil
+	} else if err != nil {
 		return metadata, err
 	}
 
@@ -663,7 +665,7 @@ func (s *Server) CheckMetadata(token, filename string, increaseDownload bool) (M
 		buffer := &bytes.Buffer{}
 		if err := json.NewEncoder(buffer).Encode(metadata); err != nil {
 			return metadata, errors.New("Could not encode metadata")
-		} else if err := s.storage.Put(token, fmt.Sprintf("%s.metadata", filename), buffer, "text/json", uint64(buffer.Len())); err != nil {
+		} else if err := s.metadataStorage.Put(token, fmt.Sprintf("%s.metadata", filename), buffer, "text/json", uint64(buffer.Len())); err != nil {
 			return metadata, errors.New("Could not save metadata")
 		}
 	}
@@ -677,7 +679,7 @@ func (s *Server) CheckDeletionToken(deletionToken, token, filename string) error
 
 	var metadata Metadata
 
-	r, _, err := s.storage.Get(token, fmt.Sprintf("%s.metadata", filename))
+	r, _, err := s.metadataStorage.Get(token, fmt.Sprintf("%s.metadata", filename))
 	if s.storage.IsNotExist(err) {
 		return nil
 	} else if err != nil {
@@ -701,8 +703,8 @@ func (s *Server) GetMetadata(token, filename string) (Metadata, error) {
 
 	var metadata Metadata
 
-	r, _, err := s.storage.Get(token, fmt.Sprintf("%s.metadata", filename))
-	if s.storage.IsNotExist(err) {
+	r, _, err := s.metadataStorage.Get(token, fmt.Sprintf("%s.metadata", filename))
+	if s.metadataStorage.IsNotExist(err) {
 		return metadata, fmt.Errorf("failed to find metadata from file %s", filename)
 	} else if err != nil {
 		return metadata, err
@@ -714,30 +716,6 @@ func (s *Server) GetMetadata(token, filename string) (Metadata, error) {
 		return metadata, err
 	}
 	return metadata, nil
-}
-
-func (s *Server) CheckAuth(user, password, token, filename string) (bool, error) {
-	s.Lock(token, filename)
-	defer s.Unlock(token, filename)
-
-	var metadata Metadata
-
-	r, _, err := s.storage.Get(token, fmt.Sprintf("%s.metadata", filename))
-	if s.storage.IsNotExist(err) {
-		return false, nil
-	} else if err != nil {
-		return false, err
-	}
-
-	defer r.Close()
-
-	if err := json.NewDecoder(r).Decode(&metadata); err != nil {
-		return false, err
-	} else if metadata.User == user && metadata.Password == cryptoPwd(password, token) {
-		return true, nil
-	}
-
-	return false, nil
 }
 
 func (s *Server) deleteHandler(w http.ResponseWriter, r *http.Request) {
@@ -754,6 +732,7 @@ func (s *Server) deleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err := s.storage.Delete(token, filename)
+	err = s.metadataStorage.Delete(token, filename+".metadata")
 	if s.storage.IsNotExist(err) {
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
@@ -1197,7 +1176,6 @@ func (s *Server) BasicAuthDownloadHandler(h http.Handler) http.HandlerFunc {
 			http.Error(w, "Not authorized", 401)
 			return
 		}
-
 		ok, err := basicAuth.Authenticate(username, password)
 		if err != nil {
 			log.Printf("Error checkAuth: %s", err.Error())

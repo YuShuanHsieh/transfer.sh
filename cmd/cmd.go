@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	redisStorage "github.com/dutchcoders/transfer.sh/redis-storage"
+
 	"github.com/dutchcoders/transfer.sh/server"
 	"github.com/fatih/color"
 	"github.com/urfave/cli"
@@ -117,7 +119,17 @@ var globalFlags = []cli.Flag{
 	},
 	cli.StringFlag{
 		Name:  "meta-provider",
-		Usage: "s3|gdrive|local",
+		Usage: "s3|gdrive|local|redis",
+		Value: "",
+	},
+	cli.StringFlag{
+		Name:  "redis-addr",
+		Usage: "The address of redis server",
+		Value: "",
+	},
+	cli.StringFlag{
+		Name:  "redis-pwd",
+		Usage: "The password of redis server",
 		Value: "",
 	},
 	cli.StringFlag{
@@ -401,6 +413,10 @@ func New() *Cmd {
 			metaStorage = fileStorage
 		}
 
+		if metaStorage == nil {
+			panic("Metadata Provider not set or invalid.")
+		}
+
 		options = append(options, server.UseMetaStorage(metaStorage))
 
 		srvr, err := server.New(
@@ -456,6 +472,13 @@ func getStorage(c *cli.Context, provider string, logger *log.Logger) server.Stor
 		} else {
 			return storage
 		}
+	case "redis":
+		redisAddr := c.String("redis-addr")
+		redisPwd := c.String("redis-pwd")
+		if redisAddr == "" {
+			return nil
+		}
+		return redisStorage.New(redisAddr, redisPwd)
 	default:
 		return nil
 	}

@@ -39,7 +39,7 @@ type Metadata struct {
 }
 
 func (m *Metadata) Authenticate(user, password string) (bool, error) {
-	if user == m.User && password != password {
+	if user == m.User && password == password {
 		return true, nil
 	}
 	return false, nil

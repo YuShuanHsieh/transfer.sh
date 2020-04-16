@@ -14,6 +14,7 @@ require (
 	github.com/elazarl/go-bindata-assetfs v1.0.0
 	github.com/fatih/color v1.9.0
 	github.com/garyburd/redigo v1.6.0 // indirect
+	github.com/go-redis/redis/v7 v7.2.0
 	github.com/golang/gddo v0.0.0-20200310004957-95ce5a452273
 	github.com/golang/protobuf v1.3.5 // indirect
 	github.com/gorilla/handlers v1.4.2
@@ -25,6 +26,7 @@ require (
 	github.com/nu7hatch/gouuid v0.0.0-20131221200532-179d4d0c4d8d // indirect
 	github.com/russross/blackfriday/v2 v2.0.1
 	github.com/skip2/go-qrcode v0.0.0-20191027152451-9434209cb086
+	github.com/stretchr/testify v1.5.1
 	github.com/tomasen/realip v0.0.0-20180522021738-f0c99a92ddce
 	github.com/urfave/cli v1.22.3
 	golang.org/x/crypto v0.0.0-20200311171314-f7b00557c8c4
