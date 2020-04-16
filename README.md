@@ -13,19 +13,24 @@ go run main.go --provider="local" --meta-provider="redis" --redis-addr="localhos
 
 ### Upload:
 ```bash
-$ curl --upload-file ./hello.txt http://<your.domain.com>/hello.txt
+$ curl -X PUT -F "file=@./examples.md" http://<your.domain.com>/hello.txt
 ```
-#### Upload with IP filter
-name of query string: `ip`
-You can use `,` to separate multiple ip addresses or use `CIDR`.
-```bash
-$ curl --upload-file ./hello.txt http://<your.domain.com>/hello.txt&ip=168.0.0.1,0.0.0.0/0
-```
+### Upload with download restrictions
 
-#### Upload with basic auth
-**!!NOTE:** currently we use query string to send user password so please make sure using the internal network to prevent hacking. 
+#### Form
+
+Parameter | Description | Example 
+--- | --- | ---
+ip | allowed IPs or CIDR | 127.0.0.1,0.0.0.0/0
+user | user for HTTP basic Auth | user
+password | password for HTTP basic Auth | password
+
+Example
 ```bash
-$ curl --upload-file ./hello.txt http://<your.domain.com>/hello.txt&user=<user name>&password=<user password>
+curl -X PUT -H "Content-Type: multipart/form-data" \
+-F "user=user" \
+-F "password=password" \
+-F "file=@./examples.md" "http://localhost:8080/examples.md"
 ```
 
 ### Deleting
@@ -37,12 +42,12 @@ $ curl -X DELETE <X-Url-Delete Response Header URL>
 
 ### Max-Downloads
 ```bash
-$ curl --upload-file ./hello.txt http://<your.domain.com>/hello.txt -H "Max-Downloads: 1" # Limit the number of downloads
+$ curl -X PUT -F "file=@./examples.md" http://<your.domain.com>/hello.txt -H "Max-Downloads: 1" # Limit the number of downloads
 ```
 
 ### Max-Days
 ```bash
-$ curl --upload-file ./hello.txt http://<your.domain.com>/hello.txt -H "Max-Days: 1" # Set the number of days before deletion
+$ curl -X PUT -F "file=@./examples.md" http://<your.domain.com>/hello.txt -H "Max-Days: 1" # Set the number of days before deletion
 ```
 
 ## Response Headers
@@ -51,7 +56,7 @@ $ curl --upload-file ./hello.txt http://<your.domain.com>/hello.txt -H "Max-Days
 
 The URL used to request the deletion of a file. Returned as a response header.
 ```bash
-curl -sD - --upload-file ./hello http://<your.domain.com>/hello.txt | grep 'X-Url-Delete'
+curl -sD - -X PUT -F "file=@./examples.md" http://<your.domain.com>/hello.txt | grep 'X-Url-Delete'
 X-Url-Delete: http://<your.domain.com>/BAYh0/hello.txt/PDw0NHPcqU
 ```
 
@@ -138,7 +143,7 @@ For the usage with Google drive, you need to specify the following options:
 
 ### Creating Gdrive Client Json
 
-You need to create a Oauth Client id from console.cloud.google.com
+You need to create an Oauth Client id from console.cloud.google.com
 download the file and place into a safe directory
 
 ### Usage example

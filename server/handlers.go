@@ -325,7 +325,7 @@ func (s *Server) postHandler(w http.ResponseWriter, r *http.Request) {
 
 				cleanTmpFile(file)
 				return
-			} else if err := s.storage.Put(token, fmt.Sprintf("%s.metadata", filename), buffer, "text/json", uint64(buffer.Len())); err != nil {
+			} else if err := s.metadataStorage.Put(token, fmt.Sprintf("%s.metadata", filename), buffer, "text/json", uint64(buffer.Len())); err != nil {
 				log.Printf("%s", err.Error())
 				http.Error(w, errors.New("Could not save metadata").Error(), 500)
 
@@ -405,16 +405,22 @@ func (s *Server) putHandler(w http.ResponseWriter, r *http.Request) {
 		ips, nets, err = parseIPString(ipsStr)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 	}
 
 	filename := sanitize(vars["filename"])
 
-	contentLength := r.ContentLength
-
 	var reader io.Reader
 
-	reader = r.Body
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	reader = file
+
+	contentLength := header.Size
 
 	defer r.Body.Close()
 
