@@ -55,6 +55,7 @@ import (
 )
 
 const SERVER_INFO = "transfer.sh"
+const ServerAuthKey = "serverAuthKey"
 
 // parse request with maximum memory of _24Kilobits
 const _24K = (1 << 3) * 24
@@ -63,8 +64,7 @@ const _24K = (1 << 3) * 24
 const _5M = (1 << 20) * 5
 
 type Server struct {
-	// This authenticator is for uploading files
-	serverAuth Authenticator
+	auths map[string]Authenticator
 
 	logger *log.Logger
 
@@ -113,6 +113,7 @@ type DefaultServAuthenticator struct {
 
 func New(options ...OptionFn) (*Server, error) {
 	s := &Server{
+		auths: make(map[string]Authenticator),
 		locks: map[string]*sync.Mutex{},
 	}
 
@@ -225,8 +226,12 @@ func (s *Server) Run() {
 		getHandlerFn = ratelimit.Request(ratelimit.IP).Rate(s.rateLimitRequests, 60*time.Second).LimitBy(memory.New())(http.HandlerFunc(getHandlerFn)).ServeHTTP
 	}
 
-	r.HandleFunc("/{token}/{filename}", s.BasicAuthDownloadHandler(http.HandlerFunc(getHandlerFn))).Methods("GET")
-	r.HandleFunc("/{action:(?:download|get|inline)}/{token}/{filename}", s.BasicAuthDownloadHandler(http.HandlerFunc(getHandlerFn))).Methods("GET")
+	r.HandleFunc("/{token}/{filename}",
+		s.AssignMetadata(MetadataAllowedIP(s.MetadataBasicAuth(http.HandlerFunc(getHandlerFn)))),
+	).Methods("GET")
+	r.HandleFunc("/{action:(?:download|get|inline)}/{token}/{filename}",
+		s.AssignMetadata(MetadataAllowedIP(s.MetadataBasicAuth(http.HandlerFunc(getHandlerFn)))),
+	).Methods("GET")
 
 	r.HandleFunc("/{filename}/virustotal", s.virusTotalHandler).Methods("PUT")
 	r.HandleFunc("/{filename}/scan", s.scanHandler).Methods("PUT")

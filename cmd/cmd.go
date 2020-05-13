@@ -379,7 +379,7 @@ func New() *Cmd {
 		} else {
 			var authenticator server.DefaultServAuthenticator
 			authenticator.Set(httpAuthUser, httpAuthPass)
-			options = append(options, server.AuthCredentials(&authenticator))
+			options = append(options, server.AuthCredential(server.ServerAuthKey, &authenticator))
 		}
 
 		applyIPFilter := false

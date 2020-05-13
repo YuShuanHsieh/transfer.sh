@@ -184,9 +184,9 @@ func TLSConfig(cert, pk string) OptionFn {
 	}
 }
 
-func AuthCredentials(auth Authenticator) OptionFn {
+func AuthCredential(key string, auth Authenticator) OptionFn {
 	return func(srvr *Server) {
-		srvr.serverAuth = auth
+		srvr.auths[key] = auth
 	}
 }
 

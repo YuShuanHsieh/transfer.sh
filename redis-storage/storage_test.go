@@ -10,8 +10,7 @@ import (
 	redisStorage "github.com/dutchcoders/transfer.sh/redis-storage"
 )
 
-// TODO: add container for test
-
+// TODO: add a container manager for setting up a test env
 func TestRedisStorage(t *testing.T) {
 	token := "test-token"
 	filename := "example.md"

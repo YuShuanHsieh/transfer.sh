@@ -32,6 +32,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -75,6 +76,15 @@ var (
 	textTemplates = initTextTemplates()
 )
 
+type metadataContextKey struct{}
+
+type uploadParams struct {
+	apiAccount string
+	username   string
+	password   string
+	ips        string
+}
+
 func stripPrefix(path string) string {
 	return strings.Replace(path, web.Prefix+"/", "", -1)
 }
@@ -98,6 +108,14 @@ func initHTMLTemplates() *html_template.Template {
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Approaching Neutral Zone, all systems normal and functioning.")
+}
+
+func getUploadParams(r *http.Request) (params uploadParams) {
+	params.apiAccount = r.Form.Get("api")
+	params.username = r.Form.Get("user")
+	params.password = r.Form.Get("password")
+	params.ips = r.Form.Get("ip")
+	return
 }
 
 /* The preview handler will show a preview of the content for browsers (accept type text/html), and referer is not transfer.sh */
@@ -256,19 +274,17 @@ func sanitize(fileName string) string {
 func (s *Server) postHandler(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(_24K); nil != err {
 		log.Printf("%s", err.Error())
-		http.Error(w, "Error occurred copying to output stream", 500)
+		http.Error(w, "Error occurred copying to output stream", http.StatusInternalServerError)
 		return
 	}
 
-	user := r.Form.Get("user")
-	pwd := r.Form.Get("password")
-	ipsStr := r.Form.Get("ip")
+	params := getUploadParams(r)
 
 	var err error
 	var ips []net.IP
 	var nets []*net.IPNet
-	if ipsStr != "" {
-		ips, nets, err = parseIPString(ipsStr)
+	if params.ips != "" {
+		ips, nets, err = parseIPString(params.ips)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -333,13 +349,17 @@ func (s *Server) postHandler(w http.ResponseWriter, r *http.Request) {
 
 			metadata := MetadataForRequest(contentType, r)
 
-			if user != "" && pwd != "" {
+			if params.username != "" && params.password != "" {
 				metadata.AuthTypes = append(metadata.AuthTypes, METADATA)
-				metadata.User = user
-				metadata.Password = cryptoPwd(pwd, token)
+				metadata.User = params.username
+				metadata.Password = cryptoPwd(params.password, token)
 			}
 
-			if ipsStr != "" {
+			if params.apiAccount != "" {
+				metadata.AuthTypes = append(metadata.AuthTypes, API)
+			}
+
+			if params.ips != "" {
 				metadata.AuthTypes = append(metadata.AuthTypes, IP)
 				metadata.IP = ips
 				metadata.Nets = nets
@@ -1093,7 +1113,8 @@ func IPFilterHandler(h http.Handler, ipFilterOptions *IPFilterOptions) http.Hand
 
 func (s *Server) BasicAuthHandler(h http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.serverAuth == nil {
+		authenticator, ok := s.auths[ServerAuthKey]
+		if !ok {
 			h.ServeHTTP(w, r)
 			return
 		}
@@ -1106,7 +1127,7 @@ func (s *Server) BasicAuthHandler(h http.Handler) http.HandlerFunc {
 			return
 		}
 
-		if ok, err := s.serverAuth.Authenticate(username, password); !ok || err != nil {
+		if ok, err := authenticator.Authenticate(username, password); !ok || err != nil {
 			http.Error(w, "Not authorized", 401)
 			return
 		}
@@ -1115,58 +1136,68 @@ func (s *Server) BasicAuthHandler(h http.Handler) http.HandlerFunc {
 	}
 }
 
-func (s *Server) BasicAuthDownloadHandler(h http.Handler) http.HandlerFunc {
+func (s *Server) AssignMetadata(h http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
-
 		token := vars["token"]
 		filename := vars["filename"]
 
 		metadata, err := s.GetMetadata(token, filename)
 		if err != nil {
-			log.Printf("failed to get metadata: %s", err.Error())
+			errMsg := fmt.Sprintf("failed to get metadata: %s", err.Error())
+			http.Error(w, errMsg, http.StatusBadRequest)
+			return
 		}
-		if len(metadata.AuthTypes) == 0 {
+		req := r.WithContext(context.WithValue(r.Context(), metadataContextKey{}, metadata))
+		h.ServeHTTP(w, req)
+	}
+}
+
+func MetadataAllowedIP(h http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		v := r.Context().Value(metadataContextKey{})
+		if metadata, ok := v.(Metadata); !ok {
+			http.Error(w, "failed to get metadata", http.StatusBadRequest)
+			return
+		} else {
+			if !metadata.AllowedIP(r.RemoteAddr) {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+		}
+		h.ServeHTTP(w, r)
+	}
+}
+
+func (s *Server) MetadataBasicAuth(h http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		v := r.Context().Value(metadataContextKey{})
+		metadata, ok := v.(Metadata)
+		if !ok {
+			http.Error(w, "failed to get metadata", http.StatusBadRequest)
+			return
+		}
+		if !metadata.AuthRequired() {
 			h.ServeHTTP(w, r)
 		}
 
+		vars := mux.Vars(r)
+		token := vars["token"]
+
 		var basicAuth Authenticator
-		blockedIP := false
 		for _, authType := range metadata.AuthTypes {
 			switch authType {
-			case ACCOUNT:
-				// TODO: add code Authenticator
-			case METADATA:
-				basicAuth = &metadata
-			case IP:
-				blockedIP = true
-				host, _, err := net.SplitHostPort(r.RemoteAddr)
-				remoteIP := net.ParseIP(host)
-				if err != nil || remoteIP == nil {
-					log.Printf("remoteAddr of request is: %s \n", r.RemoteAddr)
-					http.Error(w, "Not authorized", 401)
+			case API:
+				authenticator, ok := s.auths[string(API)]
+				if !ok {
+					http.Error(w, "the api authenticator does not set up", http.StatusInternalServerError)
 					return
 				}
-				for _, ip := range metadata.IP {
-					if ip.Equal(remoteIP) {
-						blockedIP = false
-						break
-					}
-				}
-				if blockedIP {
-					for _, net := range metadata.Nets {
-						if net.Contains(remoteIP) {
-							blockedIP = false
-							break
-						}
-					}
-				}
+				basicAuth = authenticator
+			case METADATA:
+				basicAuth = &metadata
+			default:
 			}
-		}
-
-		if blockedIP {
-			http.Error(w, "Not authorized", 401)
-			return
 		}
 
 		w.Header().Set("WWW-Authenticate", "Basic realm=\"Restricted\"")
@@ -1176,15 +1207,14 @@ func (s *Server) BasicAuthDownloadHandler(h http.Handler) http.HandlerFunc {
 			http.Error(w, "Not authorized", 401)
 			return
 		}
-		ok, err := basicAuth.Authenticate(username, password)
+		ok, err := basicAuth.Authenticate(username, cryptoPwd(password, token))
 		if err != nil {
 			log.Printf("Error checkAuth: %s", err.Error())
 		}
 		if !ok {
-			http.Error(w, "Not authorized", 401)
+			http.Error(w, "Not authorized", http.StatusUnauthorized)
 			return
 		}
-
 		h.ServeHTTP(w, r)
 	}
 }
@@ -1215,7 +1245,7 @@ func parseIPString(ipsStr string) ([]net.IP, []*net.IPNet, error) {
 	}
 
 	if len(ipArray) == 0 && len(ipNets) == 0 {
-		return ipArray, ipNets, errors.New("invalid IP strings")
+		return ipArray, ipNets, errors.New("invalid IP strings: " + ipsStr)
 	}
 
 	return ipArray, ipNets, nil

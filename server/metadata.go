@@ -10,7 +10,7 @@ type AuthType string
 const (
 	IP       AuthType = "IP"
 	METADATA AuthType = "METADATA"
-	ACCOUNT  AuthType = "ACCOUNT"
+	API      AuthType = "API"
 )
 
 type Metadata struct {
@@ -39,8 +39,43 @@ type Metadata struct {
 }
 
 func (m *Metadata) Authenticate(user, password string) (bool, error) {
-	if user == m.User && password == password {
+	if user == m.User && m.Password == password {
 		return true, nil
 	}
 	return false, nil
+}
+
+func (m *Metadata) AuthRequired() bool {
+	return len(m.AuthTypes) != 0
+}
+
+func (m *Metadata) IPFilterEnabled() bool {
+	for _, v := range m.AuthTypes {
+		if v == IP {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Metadata) AllowedIP(remoteAddr string) bool {
+	if !m.IPFilterEnabled() {
+		return true
+	}
+	host, _, err := net.SplitHostPort(remoteAddr)
+	remoteIP := net.ParseIP(host)
+	if err != nil || remoteIP == nil {
+		return false
+	}
+	for _, ip := range m.IP {
+		if ip.Equal(remoteIP) {
+			return true
+		}
+	}
+	for _, net := range m.Nets {
+		if net.Contains(remoteIP) {
+			return true
+		}
+	}
+	return false
 }
