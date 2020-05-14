@@ -9,6 +9,12 @@ Easy and fast file sharing from the command-line. This code contains the server 
 go run main.go --provider="local" --meta-provider="redis" --redis-addr="localhost:6379" --basedir="./files" --http-auth-user="cherie" --http-auth-pass="cherie"
 ```
 
+Or use API authenticator for files downloading
+
+```
+go run main.go --provider="local" --basedir="./files" --http-auth-user="cherie" --http-auth-pass="cherie" --api-endpoint=http://localhost:1313/auth
+```
+
 ## Usage
 
 ### Upload:
@@ -24,12 +30,21 @@ Parameter | Description | Example
 ip | allowed IPs or CIDR | 127.0.0.1,0.0.0.0/0
 user | user for HTTP basic Auth | user
 password | password for HTTP basic Auth | password
+api | user account for the api authenticator | cherie
 
 Example
+
 ```bash
-curl -X PUT -H "Content-Type: multipart/form-data" \
+curl -X POST -H "Content-Type: multipart/form-data" \
 -F "user=user" \
 -F "password=password" \
+-F "file=@./examples.md" "http://localhost:8080/examples.md"
+```
+
+API
+```bash
+curl -X POST -H "Content-Type: multipart/form-data" \
+-F "api=username" \
 -F "file=@./examples.md" "http://localhost:8080/examples.md"
 ```
 
@@ -80,6 +95,8 @@ web-path | path to static web files (for development or custom front end) | |
 proxy-path | path prefix when service is run behind a proxy | |
 ga-key | google analytics key for the front end | |
 uservoice-key | user voice key for the front end  | |
+api-endpoint | the endpoint for api authenticator | | 
+api-headers | the HTTP(s) headers for api authenticator | | 
 provider | which storage provider to use | (s3, gdrive or local) |
 meta-provider | which storage provider to use | (s3, gdrive, local, redis) |
 redis-addr | The address of redis server | localhost:6379 | 
