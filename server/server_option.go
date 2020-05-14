@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	apiauth "github.com/dutchcoders/transfer.sh/api-auth"
+
 	"golang.org/x/crypto/acme/autocert"
 
 	context "golang.org/x/net/context"
@@ -181,6 +183,13 @@ func TLSConfig(cert, pk string) OptionFn {
 				return &certificate, err
 			},
 		}
+	}
+}
+
+func UseAPIAuthenticator(cfg apiauth.APIConfig) OptionFn {
+	auth := apiauth.New(cfg)
+	return func(srvr *Server) {
+		srvr.auths[string(API)] = auth
 	}
 }
 

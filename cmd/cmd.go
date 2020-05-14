@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	apiauth "github.com/dutchcoders/transfer.sh/api-auth"
+
 	redisStorage "github.com/dutchcoders/transfer.sh/redis-storage"
 
 	"github.com/dutchcoders/transfer.sh/server"
@@ -110,6 +112,16 @@ var globalFlags = []cli.Flag{
 		Usage: "key for user voice (front end)",
 		Value: "",
 		EnvVar: "USERVOICE_KEY",
+	},
+	cli.StringFlag{
+		Name:  "api-endpoint",
+		Usage: "the endpoint for the api authenticator",
+		Value: "",
+	},
+	cli.StringFlag{
+		Name:  "api-headers",
+		Usage: "additional headers for the api authenticator",
+		Value: "",
 	},
 	cli.StringFlag{
 		Name:  "provider",
@@ -415,6 +427,22 @@ func New() *Cmd {
 
 		if metaStorage == nil {
 			panic("Metadata Provider not set or invalid.")
+		}
+
+		if endpoint := c.String("api-endpoint"); endpoint != "" {
+			var headerM map[string]string
+			if headerStr := c.String("api-headers"); headerStr != "" {
+				headerM = make(map[string]string)
+				headers := strings.Split(headerStr, ",")
+				for _, header := range headers {
+					pair := strings.SplitN(strings.TrimSpace(header), "=", 2)
+					headerM[pair[0]] = pair[1]
+				}
+			}
+			options = append(options, server.UseAPIAuthenticator(apiauth.APIConfig{
+				Endpoint: endpoint,
+				Headers:  headerM,
+			}))
 		}
 
 		options = append(options, server.UseMetaStorage(metaStorage))
