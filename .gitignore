@@ -10,6 +10,8 @@ files/
 
 .tmp
 .vagrant
+*.env
+*.json
 
 bower_components/
 node_modules/

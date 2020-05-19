@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: transfer-redis-service
+spec:
+  ports:
+  - name: redis
+    protocol: TCP
+    port: 6379
+    targetPort: 6379
+  selector:
+    app: transfer
+    component: redis
+  clusterIP: None
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transfer-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: transfer
+      component: redis
+  template:
+    metadata:
+      labels:
+        app: transfer
+        component: redis
+    spec:
+      containers:
+        - name: transfer-redis
+          image: redis:6.0-alpine
+          ports:
+          - containerPort: 6379
+
