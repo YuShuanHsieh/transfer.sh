@@ -17,6 +17,12 @@ import (
 
 type OptionFn func(*Server)
 
+func ProxyPort(s string) OptionFn {
+	return func(srvr *Server) {
+		srvr.proxyPort = s
+	}
+}
+
 func ClamavHost(s string) OptionFn {
 	return func(srvr *Server) {
 		srvr.ClamAVDaemonHost = s
