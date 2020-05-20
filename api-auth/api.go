@@ -3,7 +3,6 @@ package apiauth
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 )
@@ -42,7 +41,7 @@ func (a *APIAuthenticator) Authenticate(user, password string) (bool, error) {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != 200 {
-		return false, errors.New(fmt.Sprintf("failed to send an auth request: %v", err))
+		return false, fmt.Errorf("failed to send an auth request: %v", err)
 	}
 	return true, nil
 }
