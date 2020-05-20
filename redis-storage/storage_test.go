@@ -24,6 +24,12 @@ func TestRedisStorage(t *testing.T) {
 	assert.NoError(t, err)
 
 	rc, s, err := storage.Get(token, filename)
+	assert.NoError(t, err)
+
+	if rc == nil {
+		return
+	}
+
 	result, err := ioutil.ReadAll(rc)
 	assert.NoError(t, err)
 
