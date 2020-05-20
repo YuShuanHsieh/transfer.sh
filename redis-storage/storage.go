@@ -14,6 +14,11 @@ type RedisStorage struct {
 	client *redis.Client
 }
 
+const (
+	redisTypeSubKey   = "type"
+	redisLengthSubKey = "length"
+)
+
 func New(addr, password string) server.Storage {
 	client := redis.NewClient(&redis.Options{Addr: addr, Password: password})
 	return &RedisStorage{
@@ -23,7 +28,7 @@ func New(addr, password string) server.Storage {
 
 func (r *RedisStorage) Get(token string, filename string) (reader io.ReadCloser, contentLength uint64, err error) {
 	var val []byte
-	if val, err = r.client.Get(fmt.Sprintf("storage:%s:%s", token, filename)).Bytes(); err != nil {
+	if val, err = r.client.Get(formRedisKey(token, filename)).Bytes(); err != nil {
 		return
 	}
 	if contentLength, err = r.Head(token, filename); err != nil {
@@ -34,13 +39,13 @@ func (r *RedisStorage) Get(token string, filename string) (reader io.ReadCloser,
 }
 
 func (r *RedisStorage) Head(token string, filename string) (contentLength uint64, err error) {
-	return r.client.Get(fmt.Sprintf("storage:%s:%s:length", token, filename)).Uint64()
+	return r.client.Get(fmt.Sprintf("%s:%s", formRedisKey(token, filename), redisLengthSubKey)).Uint64()
 }
 
 func (r *RedisStorage) Put(token string, filename string, reader io.Reader, contentType string, contentLength uint64) error {
-	key := fmt.Sprintf("storage:%s:%s", token, filename)
-	r.client.Set(key+":type", contentType, 0)
-	r.client.Set(key+":length", contentLength, 0)
+	key := formRedisKey(token, filename)
+	r.client.Set(key+":"+redisTypeSubKey, contentType, 0)
+	r.client.Set(key+":"+redisLengthSubKey, contentLength, 0)
 	if data, err := ioutil.ReadAll(reader); err != nil {
 		return err
 	} else {
@@ -51,8 +56,8 @@ func (r *RedisStorage) Put(token string, filename string, reader io.Reader, cont
 	return nil
 }
 func (r *RedisStorage) Delete(token string, filename string) error {
-	key := fmt.Sprintf("storage:%s:%s", token, filename)
-	return r.client.Del(key, key+":type", key+":length").Err()
+	key := formRedisKey(token, filename)
+	return r.client.Del(key, key+":"+redisTypeSubKey, key+":"+redisLengthSubKey).Err()
 }
 func (r *RedisStorage) IsNotExist(err error) bool {
 	if err == redis.Nil {
@@ -63,4 +68,8 @@ func (r *RedisStorage) IsNotExist(err error) bool {
 
 func (r *RedisStorage) Type() string {
 	return "redis"
+}
+
+func formRedisKey(token, filename string) string {
+	return fmt.Sprintf("storage:%s:%s", token, filename)
 }
